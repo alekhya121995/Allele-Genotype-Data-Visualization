@@ -32,6 +32,7 @@ relational database made most logical sense because all the tables were linked t
 variant, which in turn belonged to one particular gene. 
 
 Conclusion
+
 In the future, this database can be made more useful by adding more of the genes from the
 CDC and optimizing the entry. It can also be linked to epidemiology data to discover new
 and interesting ways of predicting and diagnosing illnesses. Right now, the database can
