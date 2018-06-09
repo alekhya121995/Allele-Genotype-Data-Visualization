@@ -1,0 +1,219 @@
+---
+title: "DA5020 Final Code"
+author: "Alekhya Akkunuri"
+date: "December 7, 2017"
+output:
+  html_document: default
+  word_document: default
+---
+
+## Collecting the data
+
+```{r}
+
+# load the required libraries
+library("rvest")
+library("stringr")
+library("tidyverse")
+library("XML")
+library(RCurl)
+library("data.table")
+require(sqldf)
+library("RSQLite")
+
+
+# read in URL from CDC website for NAT2
+url<- "https://www.cdc.gov/genomics/population/genvar/frequencies/nat2.htm"
+pages<- getURL(url)
+# store all the  tables from the webstie
+var_table<-readHTMLTable(pages, stringsAsFactors = FALSE)
+length(var_table)
+
+# store each table as its own variable
+polymorphisms<-var_table[[1]]
+by_race<-var_table[[2]]
+by_age<-var_table[[3]]
+by_sex<-var_table[[4]]
+by_race_age<-var_table[[5]]
+by_race_sex<-var_table[[6]]
+
+```
+
+## Cleaning the tables
+
+```{r}
+# cleaning the polymorphisms table
+polymorphisms$V5<- c("NAT2", "NAT2", "NAT2", "NAT2", "NAT2") 
+
+rslocs <- grep("rs",by_race$V1)
+rsinfo <- by_race[rslocs, c(1,3,4,6,7,8)]
+polymorphisms <- left_join(rsinfo,polymorphisms,by = "V1" )
+colnames(polymorphisms)<- c("variant", "allele1", "allele2", "genotype1","genotype2", "genotype3","nucleotide_change", "amino_acid_change", "genotyping_method", "gene")
+
+# rearrange columns 
+by_race[c(2,5,7,10,12,15,17,20,22,25),4:6]<-by_race[c(2,5,7,10,12,15,17,20,22,25),5:7]
+by_sex[c(2,4,6,8,10,12,14,16,18,20),4:6]<-by_sex[c(2,4,6,8,10,12,14,16,18,20),5:7]
+by_age[c(2,6,8,12,14,18,20,24,26,30),4:6]<-by_age[c(2,6,8,12,14,18,20,24,26,30),5:7]
+
+# function to clean all tables with three inputs for table and column names
+clean_table<-function(table,keyname,keyname2) {
+  # condition for by_race, by_sex and by_age   
+  if (length(table)>8) {
+    table$V10<-table$V1
+    table$V1<-str_replace(table$V1, "^(?!rs).*$", "")
+    table$V10<-str_replace(table$V10, "rs.*","")
+    delete<-grep("rs", table$V1)
+    setDT(table)[, V1:=V1[1L] ,cumsum(V1!='')]
+    table<-as.data.frame(table)
+    table<-table[-delete,]
+    
+    table$V7<- NULL
+    table$V8<- NULL
+    table$V9 <- NULL
+    
+    
+    colnames(table)<- c("variant", "allele1", "allele2", "genotype1","genotype2", "genotype3", keyname) 
+    table<-as.data.frame(apply(table,2,function(x)gsub('\\(.*', '',x)))
+    
+  }
+  # condition for by_race_sex  
+  else {
+    if (length(c(grep("Male",table$V2))) >0){
+      
+      table$V10<-table$V1
+      table$V1<-str_replace(table$V1, "^(?!rs).*$", "")
+      delete<-grep("rs", table$V1)
+      table$V10<-str_replace(table$V10, "rs.*","")
+      table$V11<-str_replace(table$V10, "Female","")
+      setDT(table)[, V11:=V11[1L] ,cumsum(V11!='')]
+      setDT(table)[, V1:=V1[1L] ,cumsum(V1!='')]
+      table<-as.data.frame(table)
+      table<-table[-delete,]
+      table$V7<- NULL
+      table$V8<- NULL
+      
+      colnames(table)<- c("variant", "allele1", "allele2", "genotype1","genotype2", "genotype3", keyname,keyname2)
+      table[seq(1, nrow(table), 2), 7] <- table[seq(1, nrow(table), 2), 2]
+      table[seq(1, nrow(table), 2), 2:5] <- table[seq(1, nrow(table), 2), 3:6]
+      table<-as.data.frame(apply(table,2,function(x)gsub('\\(.*', '',x)))
+    }
+    
+    
+    # condition for by_race_age   
+    else {
+      table$V10<-table$V1
+      table$V1<-str_replace(table$V1, "^(?!rs).*$", "")
+      table$V10<-str_replace(table$V10, "rs.*","")
+      delete<-grep("rs", table$V1)
+      table$V11<-str_replace(table$V10, "(>=)?(\\d+.*)", "")
+      table$V10<-str_replace(table$V10, "[a-zA-Z].*","")
+      setDT(table)[, V11:=V11[1L] ,cumsum(V11!='')]
+      setDT(table)[, V1:=V1[1L] ,cumsum(V1!='')]
+      
+      table<-table[-delete,]
+      table<-as.data.frame(table)
+      table$V7<- NULL
+      table$V8<- NULL
+      colnames(table)<- c("variant", "allele1", "allele2", "genotype1","genotype2", "genotype3", keyname,keyname2)
+      table[seq(1, nrow(table), 4), 7] <- table[seq(1, nrow(table), 4), 2]
+      table[seq(1, nrow(table), 4), 2:5] <- table[seq(1, nrow(table), 4), 3:6]
+      table<-as.data.frame(apply(table,2,function(x)gsub('\\(.*', '',x)))
+    }
+    
+    
+  }
+  
+  return(table)
+  
+}
+
+# storing each cleaned table and setting column names
+by_race<-clean_table(by_race,"race")
+
+by_sex<-clean_table(by_sex,"sex")
+
+by_age<-clean_table(by_age,"age")
+
+by_race_age<-clean_table(by_race_age,"age","race")
+
+by_race_sex<-clean_table(by_race_sex,"sex","race")
+
+
+```
+
+## Creating the database
+
+```{r}
+
+# establishing connection to database
+db<- dbConnect(SQLite(), dbname = "allele_genotype")
+
+# designing the database
+dbSendQuery(conn = db,  "CREATE TABLE Polymorphisms (variant varchar(255), allele1 varchar(255), allele2 varchar(255), genotype1 varchar(255), genotype2 varchar(255), genotype3 varchar(255), nucleotide_change varchar(255), amino_acid_change varchar(255), genotyping_method varchar(255), gene varchar(255), PRIMARY KEY (variant));")
+
+dbSendQuery(conn = db,  "CREATE TABLE by_age (variant varchar(255), allele1  int, allele2  int, genotype1  int, genotype2 int, genotype3 int, age varchar(255), PRIMARY KEY (variant, age), FOREIGN KEY(variant) REFERENCES Polymorphisms(variant));")
+
+dbSendQuery(conn = db,  "CREATE TABLE by_race (variant varchar(255), allele1 int, allele2 int, genotype1 int, genotype2 int, genotype3 int, race varchar(255), PRIMARY KEY (variant, race), FOREIGN KEY(variant) REFERENCES Polymorphisms(variant));")
+
+dbSendQuery(conn = db,  "CREATE TABLE by_sex (variant varchar(255), allele1 int, allele2 int, genotype1 int, genotype2 int, genotype3 int, sex varchar(255), PRIMARY KEY (variant, sex), FOREIGN KEY(variant) REFERENCES Polymorphisms(variant));")
+
+dbSendQuery(conn = db,  "CREATE TABLE by_race_sex (variant varchar(255), allele1 int, allele2 int, genotype1 int, genotype2 int, genotype3 int, sex varchar(255), race varchar(255),PRIMARY KEY (variant, sex, race), FOREIGN KEY(variant) REFERENCES Polymorphisms(variant));")
+
+dbSendQuery(conn = db,  "CREATE TABLE by_race_age (variant varchar(255), allele1 int, allele2 int, genotype1 int, genotype2 int, genotype3 int, age varchar(255), race varchar(255),PRIMARY KEY (variant, age, race), FOREIGN KEY(variant) REFERENCES Polymorphisms(variant));")
+
+# adding tables to the database
+dbWriteTable(conn = db, name = "Polymorphisms", value = polymorphisms ,append = TRUE,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "by_race", value = by_race ,append = TRUE,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "by_age", value = by_age ,append = TRUE,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "by_sex", value = by_sex ,append = TRUE,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "by_race_age", value = by_race_age ,append = TRUE,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "by_race_sex", value = by_race_sex ,append = TRUE,
+             row.names = FALSE, header = TRUE)
+
+```
+
+## Querying the database
+
+```{r}
+
+# display race and genotype2 from the race table for variants containing C
+dbGetQuery(conn = db,  "SELECT race, genotype2 FROM by_race WHERE variant in (SELECT variant FROM polymorphisms where allele1 = 'C')")
+
+# display all the genotypes from the race table for selected variant and race
+dbGetQuery(conn = db,  "SELECT genotype1, genotype2, genotype3 FROM by_race WHERE variant in (SELECT variant FROM polymorphisms where allele1 = 'C' AND variant = 'rs1801280' AND race = 'Mexican American')")
+
+# display all the genotypes from the age table for selected variant
+dbGetQuery(conn = db,  "SELECT age, genotype1, genotype2, genotype3 FROM by_age WHERE variant in (SELECT variant FROM polymorphisms where allele1 = 'C' AND variant = 'rs1801280')")
+
+# display all the alleles from the sex table for selected variant
+dbGetQuery(conn = db,  "SELECT sex, allele1, allele2 FROM by_sex WHERE variant in (SELECT variant FROM polymorphisms where allele1 = 'C' AND variant = 'rs1801280')")
+
+# display all the genotypes from the age table for selected gene
+dbGetQuery(conn = db,  "SELECT variant, age, genotype1, genotype2, genotype3 FROM by_age WHERE variant in (SELECT variant FROM polymorphisms where gene = 'NAT2')")
+
+# select entire data from by_race table
+data_race <- dbGetQuery(conn = db, sprintf("SELECT * FROM by_race"))
+# visualize data from by_race
+ggplot(data = data_race ,aes(x = genotype1, y = variant, color = race)) + geom_point()
+ggplot(data = data_race ,aes(x = genotype2, y = variant, color = race)) + geom_point()
+ggplot(data = data_race ,aes(x = genotype3, y = variant, color = race)) + geom_point()
+
+# select entire data from by_race_age
+data_race_age <- dbGetQuery(conn = db, sprintf("SELECT * FROM by_race_age"))
+# melt all the columns except the ones mentioned and plot
+data_race_age<- melt(data_race_age, id = c("variant", "race", "age"))
+ggplot(data = data_race_age ,aes(x = variable, y = value, color = race)) + geom_point()
+ggplot(data = data_race_age ,aes(x = variable, y = value, color = variant)) + geom_point()
+
+
+```
